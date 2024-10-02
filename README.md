@@ -1,1 +1,1 @@
-# Python project template
+# STUN protocol implementation in Python

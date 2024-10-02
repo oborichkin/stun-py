@@ -1,23 +1,7 @@
-PROJECT_NAME = template
-
-.PHONY = test build push clean hooks
-
-install: venv hooks
+install: venv
 
 test: venv
-	$(VENV)/pytest --cov=$(PROJECT_NAME) --cov-report=html --cov-report=term tests/
-
-hooks: venv
-	$(VENV)/pre-commit install
-
-build: venv clean
-	$(VENV)/python setup.py sdist bdist_wheel
-
-sphinx: venv
-	. $(VENV)/activate && cd docs && $(MAKE) html
-
-clean:
-	rm -rf build dist *.egg-info
+	$(VENV)/pytest
 
 include Makefile.venv
 Makefile.venv:
