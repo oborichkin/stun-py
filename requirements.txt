@@ -1,0 +1,12 @@
+# Tests
+pytest
+pytest-cov
+# Linting & Formatting
+flake8
+black
+# CI
+twine
+pre-commit
+# Docs
+sphinx
+myst-parser
