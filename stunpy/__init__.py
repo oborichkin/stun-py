@@ -4,11 +4,11 @@ from dataclasses import dataclass
 
 MAGIC_COOKIE = 0x2112A442
 
-class MessageType(IntEnum):
-    REQUEST = 0b00
-    INDICATION = 0b01
-    SUCCESS_RESPONSE = 0b10
-    ERROR_RESPONSE = 0b11
+TYPE_REQ = 0x0000
+TYPE_IND = 0x0010
+TYPE_SUC = 0x0100
+TYPE_ERR = 0x0110
+
 
 class MessageMethod(IntEnum):
     BINDING = 0x0001
@@ -28,63 +28,62 @@ is_error_response   = lambda msg_type: msg_type & 0x0110 == 0x0110
 
 @dataclass
 class StunHeader:
-    typ: MessageType
-    method: MessageMethod
+    message_type: int
     length: int
     transaction_id: bytes
 
-    #             0                 1
-    #     2  3  4 5 6 7 8 9 0 1 2 3 4 5
-    #    +--+--+-+-+-+-+-+-+-+-+-+-+-+-+
-    #    |M |M |M|M|M|C|M|M|M|C|M|M|M|M|
-    #    |11|10|9|8|7|1|6|5|4|0|3|2|1|0|
-    #    +--+--+-+-+-+-+-+-+-+-+-+-+-+-+
     @property
-    def message_type(self) -> MessageType:
-        return (
-                0xF   & self.method        # M0-M3
-             | (0x1   & self.typ)    << 4  # C0
-             | (0x70  & self.method) << 1  # M4-M6
-             | (0x2   & self.typ)    << 7  # C1
-             | (0xf80 & self.method) << 2  # M7-M11
-        )
+    def method(self) -> MessageMethod:
+        return MessageMethod(self.message_type & 0x000F)
 
-    #        0                   1                   2                   3
-    #    0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1 2 3 4 5 6 7 8 9 0 1
-    #   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    #   |0 0|     STUN Message Type     |         Message Length        |
-    #   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    #   |                         Magic Cookie                          |
-    #   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    #   |                                                               |
-    #   |                     Transaction ID (96 bits)                  |
-    #   |                                                               |
-    #   +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
-    def to_bytes(self):
+    def __bytes__(self):
         return struct.pack("!HHI12s", self.message_type, self.length, MAGIC_COOKIE, self.transaction_id.to_bytes(12))
 
     @staticmethod
     def from_bytes(data: bytes):
-        assert len(data) == 20, "STUN header must be 20 bytes"
-        mt, length, _, tid = struct.unpack("!HHI12s", data)
-        return StunHeader(*StunHeader.parse_message_type(mt), length, int.from_bytes(tid, "big"))
+        assert len(data) >= 20, "STUN header must be 20 bytes"
+        mt, length, _, tid = struct.unpack("!HHI12s", data[:20])
+        return StunHeader(mt, length, int.from_bytes(tid, "big")), data[20:]
+
+
+class StunAttributeType(IntEnum):
+    MAPPED_ADDRESS = 0x0001
+    USERNAME = 0x0006
+    MESSAGE_INTEGRITY = 0x0008
+    ERROR_CODE = 0x0009
+    UNKNOWN_ATTRIBUTES = 0x000A
+    REFRESH_INTERVAL = 0x000B
+    REQUESTED_TRANSPORT = 0x0019
+    SOFTWARE = 0x8022
+    ALTERNATE_SERVER = 0x8023
+
+
+@dataclass
+class StunAttribute:
+    type: StunAttributeType
+    value: bytes
+
+    def __bytes__(self):
+        return struct.pack("!HH", self.type, len(self.value)) + self.value
 
     @staticmethod
-    def parse_message_type(data: bytes):
-        match data & 0x0110:
-            case 0x0000:
-                typ = MessageType.REQUEST
-            case 0x0010:
-                typ = MessageType.INDICATION
-            case 0x0100:
-                typ = MessageType.SUCCESS_RESPONSE
-            case 0x0110:
-                typ = MessageType.ERROR_RESPONSE
-        method = MessageMethod(data & 0x0F)
-        return typ, method
+    def from_bytes(data: bytes):
+        type, length = struct.unpack("!HH", data[:4])
+        return StunAttribute(type, data[4:4+length]), data[4+length:]
 
 
 @dataclass
 class StunMessage:
     header: StunHeader
     attributes: list
+
+    @staticmethod
+    def from_bytes(data: bytes):
+        header, data = StunHeader.from_bytes(data)
+        assert len(data) >= header.length, "STUN message is too short"
+        attributes_data = data[:header.length]
+        attributes = []
+        while attributes_data:
+            attr, attributes_data = StunAttribute.from_bytes(attributes_data)
+            attributes.append(attr)
+        return StunMessage(header, attributes), data[header.length:]
